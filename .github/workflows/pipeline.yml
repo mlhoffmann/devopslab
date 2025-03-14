@@ -52,7 +52,17 @@ jobs:
         run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
   
 
-      - name: Upload Test Reports
+      - name: Criar pasta reports se não existir
+        run: mkdir -p reports
+      
+      - name: Executar Testes e Gerar Relatório
+        run: |
+          pytest --cov=app --cov-report=xml --junitxml=reports/test-report.xml
+      
+      - name: Listar arquivos antes do upload
+        run: ls -R reports/
+      
+      - name: Upload Test Report
         uses: actions/upload-artifact@v4
         with:
           name: test-results
