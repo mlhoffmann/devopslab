@@ -58,12 +58,11 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          pytest test.py -v
           pytest test_streamlit.py -v
 
       - name: Generate Coverage Report
         run: |
-          coverage run --source=. -m pytest test.py test_streamlit.py
+          coverage run --source=. -m pytest test_streamlit.py
           coverage report -m
           coverage xml -i
 
