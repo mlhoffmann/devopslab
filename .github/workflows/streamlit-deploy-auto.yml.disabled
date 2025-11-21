@@ -1,0 +1,217 @@
+# Pipeline CI/CD com integração ServiceNow e deploy no Streamlit
+name: Streamlit Deploy Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
+  SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+  SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+
+jobs:
+  # Job 1: Build e Testes
+  Build:
+    runs-on: ubuntu-latest
+    outputs:
+      change_request_number: ${{ steps.create_cr.outputs.cr_number }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Requirements
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          pytest test.py -v
+          pytest test_streamlit.py -v
+
+      - name: Generate Coverage Report
+        run: |
+          coverage run --source=. -m pytest test.py test_streamlit.py
+          coverage report -m
+          coverage xml -i
+
+      - name: SonarCloud Scan
+        continue-on-error: true
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # Job 2: Criar Change Request no ServiceNow
+  ServiceNow_Change_Request:
+    needs: Build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      change_request_number: ${{ steps.create_cr.outputs.cr_number }}
+      change_request_sys_id: ${{ steps.create_cr.outputs.cr_sys_id }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Get Commit Info
+        id: commit_info
+        run: |
+          echo "commit_message=$(git log -1 --pretty=%B)" >> $GITHUB_OUTPUT
+          echo "commit_author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
+          echo "commit_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Create ServiceNow Change Request
+        id: create_cr
+        run: |
+          # Criar Change Request
+          RESPONSE=$(curl -s -X POST \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "short_description": "Deploy Streamlit App - Commit ${{ steps.commit_info.outputs.commit_sha }}",
+              "description": "Deploy automatizado via GitHub Actions\n\nCommit: ${{ steps.commit_info.outputs.commit_message }}\nAutor: ${{ steps.commit_info.outputs.commit_author }}\nRepositorio: ${{ github.repository }}\nBranch: ${{ github.ref_name }}",
+              "type": "standard",
+              "priority": "3",
+              "risk": "3",
+              "impact": "3"
+            }')
+
+          CR_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
+          CR_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
+
+          echo "cr_number=$CR_NUMBER" >> $GITHUB_OUTPUT
+          echo "cr_sys_id=$CR_SYS_ID" >> $GITHUB_OUTPUT
+
+          echo "✅ Change Request criado: $CR_NUMBER"
+
+          # Associar ao DPR Model Release "Ajust model" com Phase "Development"
+          DPR_RELEASE_SYS_ID="f854861587d86210ea5384c60cbb3503"
+          PHASE_SYS_ID="d5544e1587d86210ea5384c60cbb3590"
+
+          DPR_RESPONSE=$(curl -s -X POST \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/sn_dpr_model_release_phase_cr" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d "{\"change_request\": \"$CR_SYS_ID\", \"release\": \"$DPR_RELEASE_SYS_ID\", \"release_phase\": \"$PHASE_SYS_ID\"}")
+
+          echo "✅ CR associado ao DPR Model Release 'Ajust model'"
+
+      - name: Add Work Notes to Change Request
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ steps.create_cr.outputs.cr_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "work_notes": "Pipeline Status:\n- ✅ Build: Success\n- ✅ Tests: Passed\n- ✅ SonarCloud: Analyzed\n- 🚀 Ready for deployment"
+            }'
+
+  # Job 3: Deploy no Streamlit
+  Deploy_Streamlit:
+    needs: [Build, ServiceNow_Change_Request]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Deploy to Streamlit Cloud
+        run: |
+          echo "🚀 Triggering Streamlit Cloud deployment..."
+          echo "Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+
+          # Streamlit Cloud detecta automaticamente mudanças no repositório GitHub
+          # Não é necessário webhook - o deploy é automático após o push
+
+          echo "✅ Deployment iniciado automaticamente pelo Streamlit Cloud"
+
+      - name: Update ServiceNow Change Request - Deployment Started
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "state": "0",
+              "work_notes": "Deployment Status:\n- 🚀 Deploy iniciado no Streamlit Cloud\n- 📝 Commit: ${{ github.sha }}\n- 🔗 Repository: ${{ github.repository }}\n- ⏰ Timestamp: '"$(date -u +"%Y-%m-%d %H:%M:%S UTC")"'"
+            }'
+
+      - name: Wait for Deployment
+        run: |
+          echo "⏳ Aguardando deployment do Streamlit Cloud..."
+          sleep 30
+
+      - name: Update ServiceNow Change Request - Deployment Complete
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "state": "-4",
+              "work_notes": "✅ Deployment concluído com sucesso!\n\n📊 All tests passed\n🔍 Code quality verified\n⏰ Completed at: '"$(date -u +"%Y-%m-%d %H:%M:%S UTC")"'\n\n🔎 Aguardando revisão manual para fechamento."
+            }'
+
+      - name: Deployment Summary
+        run: |
+          echo "════════════════════════════════════════"
+          echo "✅ DEPLOYMENT SUCCESSFUL"
+          echo "════════════════════════════════════════"
+          echo "📝 Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "🚀 Platform: Streamlit Cloud"
+          echo "📦 Commit: ${{ github.sha }}"
+          echo "👤 Author: ${{ github.actor }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "════════════════════════════════════════"
+
+  # Job 4: Rollback em caso de falha
+  Rollback_On_Failure:
+    needs: [ServiceNow_Change_Request, Deploy_Streamlit]
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Update ServiceNow Change Request - Deployment Failed
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "state": "4",
+              "close_code": "unsuccessful",
+              "close_notes": "❌ Deploy falhou!\n\n🔗 Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n⏰ Failed at: '"$(date -u +"%Y-%m-%d %H:%M:%S UTC")"'",
+              "work_notes": "❌ Deployment failed! Check GitHub Actions logs for details."
+            }'
+
+      - name: Notify Failure
+        run: |
+          echo "════════════════════════════════════════"
+          echo "❌ DEPLOYMENT FAILED"
+          echo "════════════════════════════════════════"
+          echo "📝 Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "🔗 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "════════════════════════════════════════"

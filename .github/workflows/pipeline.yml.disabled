@@ -1,0 +1,67 @@
+# Nome do Workflow
+name: DevOpsLab Pipeline
+
+# Evento que irá acionar a pipeline
+on: 
+  push:
+    branches:
+      - main
+
+jobs:
+  Build:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+
+      - name: Install Requirements
+        run:  pip install flask flask-wtf pytest pytest-cov
+
+      - name: Unit Test
+        run: |
+          coverage run --source=app -m pytest test.py
+          coverage report -m
+          coverage xml -i
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  
+
+  Deploy:
+    needs: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      # Disparando deploy para Render via Webhook
+      - name: Trigger Render Deploy
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+  
+
+      # - name: Criar pasta reports se não existir
+      #   run: mkdir -p reports
+      
+      # - name: Executar Testes e Gerar Relatório
+      #   run: |
+      #     pytest --cov=app --cov-report=xml --junitxml=reports/test-report.xml
+      
+      # - name: Listar arquivos antes do upload
+      #   run: ls -R reports/
+      
+      # - name: Upload Test Report
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: test-results
+      #     path: reports/test-report.xml

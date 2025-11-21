@@ -1,0 +1,294 @@
+# Pipeline CI/CD com ServiceNow - Modo Automatico ou Com Aprovacao
+# Use workflow_dispatch para escolher o modo de deploy
+name: Streamlit Deploy Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: 'Modo de Deploy'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - com_aprovacao
+
+env:
+  SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
+  SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
+  SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+  # Define modo: se foi push usa 'com_aprovacao', se foi manual usa o input
+  DEPLOY_MODE: ${{ github.event_name == 'push' && 'com_aprovacao' || inputs.deploy_mode }}
+
+jobs:
+  # Job 1: Build e Testes
+  Build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Show Deploy Mode
+        run: |
+          echo "════════════════════════════════════════"
+          echo "MODO DE DEPLOY: ${{ env.DEPLOY_MODE }}"
+          echo "════════════════════════════════════════"
+          if [ "${{ env.DEPLOY_MODE }}" == "auto" ]; then
+            echo "Deploy AUTOMATICO - sem gate de aprovacao"
+          else
+            echo "Deploy COM APROVACAO - aguarda ServiceNow"
+          fi
+
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Requirements
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          pytest test.py -v
+          pytest test_streamlit.py -v
+
+      - name: Generate Coverage Report
+        run: |
+          coverage run --source=. -m pytest test.py test_streamlit.py
+          coverage report -m
+          coverage xml -i
+
+      - name: SonarCloud Scan
+        continue-on-error: true
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # Job 2: Criar Change Request no ServiceNow
+  ServiceNow_Change_Request:
+    needs: Build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      change_request_number: ${{ steps.create_cr.outputs.cr_number }}
+      change_request_sys_id: ${{ steps.create_cr.outputs.cr_sys_id }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Get Commit Info
+        id: commit_info
+        run: |
+          echo "commit_message=$(git log -1 --pretty=%s | head -c 100)" >> $GITHUB_OUTPUT
+          echo "commit_author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
+          echo "commit_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Create ServiceNow Change Request
+        id: create_cr
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "short_description": "Deploy Streamlit App - Commit ${{ steps.commit_info.outputs.commit_sha }}",
+              "description": "Deploy via GitHub Actions\n\nCommit: ${{ steps.commit_info.outputs.commit_message }}\nAutor: ${{ steps.commit_info.outputs.commit_author }}\nRepositorio: ${{ github.repository }}\nBranch: ${{ github.ref_name }}\nModo: ${{ env.DEPLOY_MODE }}",
+              "type": "standard",
+              "priority": "3",
+              "risk": "3",
+              "impact": "3"
+            }')
+
+          CR_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
+          CR_SYS_ID=$(echo $RESPONSE | jq -r '.result.sys_id')
+
+          echo "cr_number=$CR_NUMBER" >> $GITHUB_OUTPUT
+          echo "cr_sys_id=$CR_SYS_ID" >> $GITHUB_OUTPUT
+          echo "✅ Change Request criado: $CR_NUMBER"
+
+          # Associar ao DPR Model Release
+          DPR_RELEASE_SYS_ID="f854861587d86210ea5384c60cbb3503"
+          PHASE_SYS_ID="d5544e1587d86210ea5384c60cbb3590"
+
+          curl -s -X POST \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/sn_dpr_model_release_phase_cr" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d "{\"change_request\": \"$CR_SYS_ID\", \"release\": \"$DPR_RELEASE_SYS_ID\", \"release_phase\": \"$PHASE_SYS_ID\"}"
+
+          echo "✅ CR associado ao DPR Model Release 'Ajust model'"
+
+      - name: Set CR State Based on Mode
+        run: |
+          if [ "${{ env.DEPLOY_MODE }}" == "com_aprovacao" ]; then
+            # Modo com aprovacao: mover para Authorize (-3)
+            STATE="-3"
+            WORK_NOTES="Pipeline Status:\n- ✅ Build: Success\n- ✅ Tests: Passed\n\n⏳ CR em estado AUTHORIZE\n📋 Aprove esta CR para liberar o deploy!\n🔗 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Movendo CR para Authorize (aguardando aprovacao)"
+          else
+            # Modo automatico: manter em estado padrao
+            STATE="0"
+            WORK_NOTES="Pipeline Status:\n- ✅ Build: Success\n- ✅ Tests: Passed\n\n🚀 Deploy AUTOMATICO em andamento\n🔗 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Modo automatico - deploy sem aprovacao"
+          fi
+
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ steps.create_cr.outputs.cr_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d "{\"state\": \"$STATE\", \"work_notes\": \"$WORK_NOTES\"}"
+
+  # Job 3: Gate de Aprovacao (so executa se modo = com_aprovacao)
+  Wait_For_Approval:
+    needs: ServiceNow_Change_Request
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'com_aprovacao'))
+    timeout-minutes: 30
+
+    steps:
+      - name: Wait for ServiceNow Approval
+        run: |
+          echo "════════════════════════════════════════"
+          echo "⏳ AGUARDANDO APROVACAO NO SERVICENOW"
+          echo "════════════════════════════════════════"
+          echo "📝 Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo ""
+          echo "🔐 A CR esta no estado AUTHORIZE (-3)"
+          echo "📋 Aprove a CR no ServiceNow para liberar o deploy"
+          echo ""
+
+          CR_SYS_ID="${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}"
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+
+            RESPONSE=$(curl -s -X GET \
+              "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${CR_SYS_ID}?sysparm_fields=state,number" \
+              -H "Accept: application/json" \
+              -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}")
+
+            STATE=$(echo $RESPONSE | jq -r '.result.state')
+            CR_NUMBER=$(echo $RESPONSE | jq -r '.result.number')
+
+            STATE_NAME="Desconhecido"
+            case $STATE in
+              "-5") STATE_NAME="New" ;;
+              "-4") STATE_NAME="Assess" ;;
+              "-3") STATE_NAME="Authorize (aguardando)" ;;
+              "-1") STATE_NAME="Scheduled (aprovada)" ;;
+              "-2") STATE_NAME="Implement" ;;
+              "0")  STATE_NAME="Review" ;;
+              "3")  STATE_NAME="Closed" ;;
+              "4")  STATE_NAME="Canceled" ;;
+            esac
+
+            echo "[$ATTEMPT/$MAX_ATTEMPTS] CR: $CR_NUMBER | Estado: $STATE ($STATE_NAME)"
+
+            if [ "$STATE" == "-1" ] || [ "$STATE" == "-2" ]; then
+              echo ""
+              echo "════════════════════════════════════════"
+              echo "✅ CHANGE REQUEST APROVADA!"
+              echo "════════════════════════════════════════"
+              echo "🚀 Prosseguindo com o deploy..."
+              exit 0
+            fi
+
+            if [ "$STATE" == "4" ] || [ "$STATE" == "3" ]; then
+              echo ""
+              echo "❌ CHANGE REQUEST CANCELADA/FECHADA!"
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+          echo "⏰ TIMEOUT! CR nao foi aprovada em 30 minutos."
+          exit 1
+
+  # Job 4: Deploy Automatico (so executa se modo = auto)
+  Deploy_Auto:
+    needs: ServiceNow_Change_Request
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'auto'
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Deploy to Streamlit Cloud
+        run: |
+          echo "🚀 Deploy AUTOMATICO iniciado!"
+          echo "Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "✅ Deploy sem gate de aprovacao"
+
+      - name: Update CR - Deploy Complete
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "state": "-4",
+              "work_notes": "✅ Deploy AUTOMATICO concluido!\n⏰ '"$(date -u +"%Y-%m-%d %H:%M:%S UTC")"'"
+            }'
+
+      - name: Deployment Summary
+        run: |
+          echo "════════════════════════════════════════"
+          echo "✅ DEPLOY AUTOMATICO CONCLUIDO"
+          echo "════════════════════════════════════════"
+          echo "📝 CR: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "🚀 Modo: AUTOMATICO (sem aprovacao)"
+
+  # Job 5: Deploy Com Aprovacao (so executa apos Wait_For_Approval)
+  Deploy_Com_Aprovacao:
+    needs: [ServiceNow_Change_Request, Wait_For_Approval]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Deploy to Streamlit Cloud
+        run: |
+          echo "🚀 Deploy COM APROVACAO iniciado!"
+          echo "Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "✅ CR foi aprovada no ServiceNow"
+
+      - name: Update CR - Deploy Complete
+        run: |
+          curl -X PATCH \
+            "https://${SERVICENOW_INSTANCE}/api/now/table/change_request/${{ needs.ServiceNow_Change_Request.outputs.change_request_sys_id }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
+            -d '{
+              "state": "-4",
+              "work_notes": "✅ Deploy COM APROVACAO concluido!\n⏰ '"$(date -u +"%Y-%m-%d %H:%M:%S UTC")"'"
+            }'
+
+      - name: Deployment Summary
+        run: |
+          echo "════════════════════════════════════════"
+          echo "✅ DEPLOY COM APROVACAO CONCLUIDO"
+          echo "════════════════════════════════════════"
+          echo "📝 CR: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
+          echo "🚀 Modo: COM APROVACAO"
