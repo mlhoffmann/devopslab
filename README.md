@@ -185,10 +185,10 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 
 # Executar testes
-pytest test.py test_streamlit.py -v
+pytest test_streamlit.py -v
 
 # Executar com coverage
-coverage run -m pytest test.py test_streamlit.py
+coverage run -m pytest test_streamlit.py
 coverage report -m
 ```
 
@@ -266,16 +266,15 @@ python criar_change.py "Descricao da mudanca"
 devopslab/
 ├── .github/
 │   └── workflows/
-│       └── streamlit-deploy.yml    # Workflow principal
+│       └── streamlit-deploy.yml    # Workflow CI/CD principal
 ├── streamlit_app.py                # Aplicacao Streamlit
-├── app.py                          # Aplicacao Flask (legado)
-├── test.py                         # Testes Flask
-├── test_streamlit.py               # Testes Streamlit
-├── criar_change.py                 # Script para criar CR via terminal
+├── test_streamlit.py               # Testes automatizados
+├── criar_change.py                 # Script CLI para criar CR
 ├── requirements.txt                # Dependencias Python
 ├── sonar-project.properties        # Configuracao SonarCloud
-├── README.md                       # Este arquivo
-└── DEMO.md                         # Guia rapido de demo
+├── .gitignore
+├── LICENSE
+└── README.md                       # Este arquivo
 ```
 
 ### Arquivos Principais
@@ -284,7 +283,8 @@ devopslab/
 |---------|-----------|
 | `streamlit-deploy.yml` | Workflow com dois modos (auto/com_aprovacao) |
 | `streamlit_app.py` | Interface web da aplicacao |
-| `criar_change.py` | Cria CR via terminal usando .env |
+| `test_streamlit.py` | Testes automatizados com pytest |
+| `criar_change.py` | Cria CR via terminal usando variaveis de ambiente |
 | `sonar-project.properties` | Configuracao do SonarCloud |
 
 ---
