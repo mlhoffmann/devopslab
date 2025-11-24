@@ -21,6 +21,8 @@ env:
   SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
   SERVICENOW_USERNAME: ${{ secrets.SERVICENOW_USERNAME }}
   SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+  DPR_RELEASE_SYS_ID: ${{ secrets.DPR_RELEASE_SYS_ID }}
+  DPR_PHASE_SYS_ID: ${{ secrets.DPR_PHASE_SYS_ID }}
   # Define modo: se foi push usa 'com_aprovacao', se foi manual usa o input
   DEPLOY_MODE: ${{ github.event_name == 'push' && 'com_aprovacao' || inputs.deploy_mode }}
 
@@ -117,16 +119,13 @@ jobs:
           echo "cr_sys_id=$CR_SYS_ID" >> $GITHUB_OUTPUT
           echo "✅ Change Request criado: $CR_NUMBER"
 
-          # Associar ao DPR Model Release
-          DPR_RELEASE_SYS_ID="f854861587d86210ea5384c60cbb3503"
-          PHASE_SYS_ID="d5544e1587d86210ea5384c60cbb3590"
-
+          # Associar ao DPR Model Release (valores vem dos secrets)
           curl -s -X POST \
             "https://${SERVICENOW_INSTANCE}/api/now/table/sn_dpr_model_release_phase_cr" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
             -u "${SERVICENOW_USERNAME}:${SERVICENOW_PASSWORD}" \
-            -d "{\"change_request\": \"$CR_SYS_ID\", \"release\": \"$DPR_RELEASE_SYS_ID\", \"release_phase\": \"$PHASE_SYS_ID\"}"
+            -d "{\"change_request\": \"$CR_SYS_ID\", \"release\": \"${DPR_RELEASE_SYS_ID}\", \"release_phase\": \"${DPR_PHASE_SYS_ID}\"}"
 
           echo "✅ CR associado ao DPR Model Release 'Ajust model'"
 
