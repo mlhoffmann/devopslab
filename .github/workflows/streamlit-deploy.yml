@@ -265,11 +265,21 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v3
 
-      - name: Deploy to Streamlit Cloud
+      - name: Deploy to Production Branch
         run: |
           echo "🚀 Deploy COM APROVACAO iniciado!"
           echo "Change Request: ${{ needs.ServiceNow_Change_Request.outputs.change_request_number }}"
           echo "✅ CR foi aprovada no ServiceNow"
+          echo ""
+          echo "Fazendo push para branch production..."
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git fetch origin production
+          git checkout production
+          git merge main --no-edit
+          git push origin production
+          echo "✅ Código deployado na branch production"
+          echo "⏳ Streamlit Cloud detectará e fará deploy automaticamente"
 
       - name: Update CR - Deploy Complete
         run: |
