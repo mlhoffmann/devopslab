@@ -9,7 +9,7 @@ st.set_page_config(
 
 # Título principal
 st.title("🚀 Demo Petrobras CI/CD Hoffmann Teste 21/11!")
-st.info("**Produto:** ACME Americas DevOpsLab | **Versão:** 3.3 - Teste Authorize Gate")
+st.info("**Produto:** ACME Americas DevOpsLab | **Versão:** 3.4 - Teste Authorize Gate")
 st.success("✅ ServiceNow DPR Integration Active")
 
 # Informações do projeto
@@ -23,7 +23,7 @@ with col1:
     st.metric(label="Pipeline", value="GitHub Actions")
 
 with col2:
-    st.metric(label="Controle de Mudança", value="ServiceNow DPR Top")
+    st.metric(label="Controle de Mudança", value="ServiceNow DPR")
     st.metric(label="Status", value="✅ Ativo")
 
 # Seção sobre o projeto
