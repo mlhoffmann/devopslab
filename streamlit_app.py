@@ -23,7 +23,7 @@ with col1:
     st.metric(label="Pipeline", value="GitHub Actions")
 
 with col2:
-    st.metric(label="Controle de Mudança", value="ServiceNow DPR")
+    st.metric(label="Controle de Mudança", value="ServiceNow DPR Top")
     st.metric(label="Status", value="✅ Ativo")
 
 # Seção sobre o projeto
