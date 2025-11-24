@@ -274,10 +274,8 @@ jobs:
           echo "Fazendo push para branch production..."
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git fetch origin production
-          git checkout production
-          git merge main --no-edit --allow-unrelated-histories
-          git push origin production
+          git checkout -B production
+          git push -f origin production
           echo "✅ Código deployado na branch production"
           echo "⏳ Streamlit Cloud detectará e fará deploy automaticamente"
 
