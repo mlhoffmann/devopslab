@@ -9,7 +9,7 @@ st.set_page_config(
 
 # Título principal
 st.title("🚀 Demo Petrobras CI/CD Hoffmann 25/11!")
-st.info("**Produto:** ACME Americas DevOpsLab | **Versão:** 1.0 ")
+st.info("**Produto:** ACME Americas DevOpsLab | **Versão:** 2.0 ")
 st.success("✅ ServiceNow DPR Integration Active")
 
 # Informações do projeto
