@@ -1,7 +1,6 @@
 # DevOps Lab - CI/CD com ServiceNow Integration
 
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mlhoffmann_devopslab&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=mlhoffmann_devopslab)
-[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=mlhoffmann_devopslab&metric=coverage)](https://sonarcloud.io/summary/new_code?id=mlhoffmann_devopslab)
 [![DevOpsLab Pipeline](https://github.com/mlhoffmann/devopslab/actions/workflows/streamlit-deploy.yml/badge.svg)](https://github.com/mlhoffmann/devopslab/actions/workflows/streamlit-deploy.yml)
 
 Pipeline CI/CD completa com integracão ServiceNow DPR (Digital Product Release) e deploy no Streamlit Cloud. Demonstra dois cenarios: deploy automatico e deploy com gate de aprovacao.
